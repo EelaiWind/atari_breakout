@@ -33,6 +33,8 @@ RECORD_VIDEO_EVERY = 200
 # Valid actions for breakout: ['NOOP', 'FIRE', 'RIGHT', 'LEFT']
 ACTION_SPACE = 4
 
+TERMINATE_REWARD = -10
+
 def main(_):
     # make game eviornment
     env = gym.envs.make("Breakout-v0")
@@ -57,6 +59,7 @@ def main(_):
     sess.run(tf.global_variables_initializer())
 
     # Populate the replay buffer
+    env.seed(0)
     observation = env.reset()                       # retrive first env image
     observation = ob_proc.process(sess, observation)        # process the image
     state = np.stack([observation] * 4, axis=2)     # stack the image 4 times
@@ -64,11 +67,13 @@ def main(_):
         action = env.action_space.sample()
 
         next_observation, reward, done, _ = env.step(action)
+        if done: reward = TERMINATE_REWARD
         next_observation = ob_proc.process(sess, next_observation)
         next_state = np.append(state[:,:,1:], np.expand_dims(next_observation, 2), axis=2)
         replay_memory.append(Transition(state, action, reward, next_state, done))
 
         if done:
+            env.seed(0)
             observation = env.reset()
             observation = ob_proc.process(sess, observation)
             state = np.stack([observation] * 4, axis=2)
@@ -85,6 +90,7 @@ def main(_):
     for episode in xrange(TRAINING_EPISODES):
 
         # Reset the environment
+        env.seed(0)
         observation = env.reset()
         observation = ob_proc.process(sess, observation)
         state = np.stack([observation] * 4, axis=2)
@@ -101,6 +107,7 @@ def main(_):
             
             # execute the action
             next_observation, reward, done, _ = env.step(action)
+            if done: reward = TERMINATE_REWARD
             episode_reward += reward
 
             # if the size of replay buffer is too big, remove the oldest one. Hint: replay_memory.pop(0)
@@ -135,11 +142,13 @@ def main(_):
 
             if total_iteration <= EXPLORE_STPES:
                 epsilon += (FINAL_EPSILON - INITIAL_EPSILON)/EXPLORE_STPES
+            else:
+                epsilon = FINAL_EPSILON
 
             if done:
                 print ("[%s] Episode %d, frames = %d, reward = %d" % (datetime.strftime(datetime.now(), "%Y/%m/%d %H:%M:%S"), episode+1, frame+1, episode_reward))
                 break
-
     sess.close()
+
 if __name__ == '__main__':
     tf.app.run()

@@ -30,7 +30,7 @@ class DQN():
             name="weight",
             shape=tensor_shape,
             dtype=tf.float32,
-            initializer=tf.random_normal_initializer(0.0, 0.03)
+            initializer=tf.random_normal_initializer(0.0, 0.01)
         )
         bias = tf.get_variable(
             name="bias",
@@ -43,10 +43,10 @@ class DQN():
         return weight, bias
 
     def _get_loss(self):
-        mask = tf.one_hot(self.m_selected_action, self.m_action_space, dtype=tf.float32)
-        duplicate_target_value = tf.tile(tf.reshape(self.m_target_value, [-1, 1]), multiples=[1,self.m_action_space])
-        difference = tf.squared_difference(self.m_q_value, duplicate_target_value)
-        return tf.reduce_mean(tf.multiply(difference, mask))
+        index = tf.transpose(tf.stack([tf.range(tf.shape(self.m_selected_action)[0]), self.m_selected_action], axis=0))
+        q_value = tf.gather_nd(self.m_q_value, index)
+        difference = tf.squared_difference(q_value, self.m_target_value)
+        return tf.reduce_mean(difference)
 
     def _build_network(self):
         if hasattr(self, "m_update"): return
