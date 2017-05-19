@@ -12,7 +12,8 @@ class ObservationProcessor():
             self.output = tf.image.rgb_to_grayscale(self.input_state)                           # rgb to grayscale
             self.output = tf.image.crop_to_bounding_box(self.output, 34, 0, 160, 160)           # crop image
             self.output = tf.image.resize_images(                                               # resize image
-                self.output, [84, 84], method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
+                self.output, [84, 84], method=tf.image.ResizeMethod.NEAREST_NEIGHBOR
+            )
             self.output = tf.squeeze(self.output)                                               # remove rgb dimension
 
     def process(self, sess, state):
