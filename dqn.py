@@ -2,6 +2,7 @@ from __future__ import print_function
 
 import tensorflow as tf
 import numpy as np
+import os
 
 class DQN():
     # Define the following things about Deep Q Network here:
@@ -14,7 +15,7 @@ class DQN():
     #   3. Network optimizer: tf.train.RMSPropOptimizer(0.00025, 0.99, 0.0, 1e-6)
     #   4. Training operation for tensorflow
 
-    def __init__(self, network_name, action_space):
+    def __init__(self, network_name, action_space, save_directory):
         self.m_parameter_list = []
         self.m_state_feature = tf.placeholder(shape=[None, 84, 84, 4], dtype=tf.float32, name="state_feature")
         self.m_target_value = tf.placeholder(shape=[None], dtype=tf.float32, name="truth")
@@ -24,6 +25,18 @@ class DQN():
         self.m_action_space = action_space
         with tf.variable_scope(network_name):
             self._build_network()
+
+        if save_directory is not None:
+            self.m_saver = tf.train.Saver(self.get_all_parameters())
+            print("[INFO] Saving followning variables in checkpoint")
+            for var in self.m_saver._var_list:
+                print("  %s" % var.op.name)
+            self.m_save_path = os.path.join(save_directory,'model')
+            if not os.path.exists(save_directory):
+                print("[INFO] Create \"%s\" for saving checkpoint" % save_directory)
+                os.makedirs(save_directory)
+            else:
+                print("[WARNING] Checkpoint saving path \"%s\" already exists" % save_directory)
 
     def _make_variable(self, tensor_shape):
         weight = tf.get_variable(
@@ -109,3 +122,9 @@ class DQN():
         for source, destination in zip(source_network.get_all_parameters(), self.get_all_parameters()):
             assign_operation.append(tf.assign(destination, source))
         session.run([assign_operation])
+
+    def save_model(self, session, global_step):
+        self.m_saver.save(session, self.m_save_path, global_step=global_step)
+
+    def load_model(self, session, checkpoint_path):
+        self.m_saver.restore(session, checkpoint_path)
