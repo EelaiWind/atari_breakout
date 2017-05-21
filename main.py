@@ -38,6 +38,7 @@ RECORD_VIDEO_EVERY = 500
 ACTION_SPACE = 4
 
 TERMINATE_REWARD = -10
+MAX_LIFE = 5
 
 def main(_):
     # make game eviornment
@@ -59,6 +60,7 @@ def main(_):
     # tensorflow session
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
+    config.allow_soft_placement = True
     sess = tf.InteractiveSession(config=config)
     summary_writer = tf.summary.FileWriter(TENSORNOARD_PATH, sess.graph)
     sess.run(tf.global_variables_initializer())
@@ -67,19 +69,25 @@ def main(_):
     observation = env.reset()                       # retrive first env image
     observation = ob_proc.process(sess, observation)        # process the image
     state = np.stack([observation] * 4, axis=2)     # stack the image 4 times
+    pre_life = MAX_LIFE
     while len(replay_memory) < INIT_REPLAY_MEMORY_SIZE:
         action = random.randint(0,ACTION_SPACE-1)
 
-        next_observation, reward, done, _ = env.step(action)
-        if done: reward = TERMINATE_REWARD
+        next_observation, reward, done, info = env.step(action)
+        life = info['ale.lives']
+        if life != pre_life:
+            done = True
+            reward = TERMINATE_REWARD
+            pre_life = life
         next_observation = ob_proc.process(sess, next_observation)
         next_state = np.append(state[:,:,1:], np.expand_dims(next_observation, 2), axis=2)
         replay_memory.append(Transition(state, action, reward, next_state, done))
 
-        if done:
+        if life == 0:
             observation = env.reset()
             observation = ob_proc.process(sess, observation)
             state = np.stack([observation] * 4, axis=2)
+            pre_life = MAX_LIFE
         else:
             state = next_state
 
@@ -97,6 +105,7 @@ def main(_):
         observation = env.reset()
         observation = ob_proc.process(sess, observation)
         state = np.stack([observation] * 4, axis=2)
+        pre_life = MAX_LIFE
 
         episode_reward = 0                              # store the episode reward
         del loss_record[:]
@@ -111,9 +120,13 @@ def main(_):
                 action = np.argmax(q_value[0])
 
             # execute the action
-            next_observation, reward, done, _ = env.step(action)
+            next_observation, reward, done, info = env.step(action)
             episode_reward += reward
-            if done: reward = TERMINATE_REWARD
+            life = info['ale.lives']
+            if pre_life != life:
+                done = True
+                reward = TERMINATE_REWARD
+                pre_life = life
 
             # save the transition to replay buffer
             next_observation = ob_proc.process(sess, next_observation)
@@ -141,7 +154,7 @@ def main(_):
             if total_iteration % FREQ_UPDATE_TARGET_Q == 0:
                  target_Q.copy_parameter_from(sess, behavior_Q)
 
-            if done: break
+            if life == 0: break
 
         max_episode_reward = max(max_episode_reward, episode_reward)
         print ("[%s] Episode %d, frames = %d, reward = %d (%d)" % (datetime.strftime(datetime.now(), "%Y/%m/%d %H:%M:%S"), episode+1, frame+1, episode_reward, max_episode_reward))
@@ -156,4 +169,6 @@ def main(_):
     sess.close()
 
 if __name__ == '__main__':
-    tf.app.run()
+    with tf.device("/gpu:1"):
+        tf.app.run()
+
