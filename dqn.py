@@ -17,7 +17,7 @@ class DQN():
 
     def __init__(self, network_name, action_space, save_directory):
         self.m_parameter_list = []
-        self.m_state_feature = tf.placeholder(shape=[None, 84, 84, 4], dtype=tf.float32, name="state_feature")
+        self.m_state_feature = tf.placeholder(shape=[None, 84, 84, 4], dtype=tf.uint8, name="state_feature")
         self.m_target_value = tf.placeholder(shape=[None], dtype=tf.float32, name="truth")
         self.m_selected_action = tf.placeholder(shape=[None], dtype=tf.int32, name="selected_action")
 
@@ -49,7 +49,8 @@ class DQN():
             name="bias",
             shape=tensor_shape[-1:],
             dtype=tf.float32,
-            initializer=tf.constant_initializer(0.0)
+            initializer=tf.random_normal_initializer(0.0, 0.01)
+            #initializer=tf.constant_initializer(0.0)
         )
         self.m_parameter_list.append(weight)
         self.m_parameter_list.append(bias)
@@ -64,9 +65,10 @@ class DQN():
     def _build_network(self):
         if hasattr(self, "m_update"): return
 
+        input_tensor = tf.to_float(self.m_state_feature)/255.0
         with tf.variable_scope("conv_1"):
             weight, bias = self._make_variable([8, 8, 4, 32])
-            conv_1 = tf.nn.conv2d(self.m_state_feature, filter=weight, strides=[1,4,4,1], padding="SAME")
+            conv_1 = tf.nn.conv2d(input_tensor, filter=weight, strides=[1,4,4,1], padding="SAME")
             conv_1 = tf.nn.bias_add(conv_1, bias)
             conv_1 = tf.nn.relu(conv_1)
         with tf.variable_scope("conv_2"):

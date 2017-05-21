@@ -17,7 +17,8 @@ GAMMA = 0.99                        # decay rate of past observations
 # Epsilon
 INITIAL_EPSILON = 1.0               # 0.01 # starting value of epsilon
 FINAL_EPSILON = 0.1                 # 0.001 # final value of epsilon
-EXPLORE_STPES = 1000000              # frames over which to anneal epsilon
+EXPLORE_STPES = 500000              # frames over which to anneal epsilon
+epsilon_series = np.linspace(INITIAL_EPSILON, FINAL_EPSILON, EXPLORE_STPES)
 
 # replay memory
 INIT_REPLAY_MEMORY_SIZE = 50000
@@ -67,13 +68,13 @@ def main(_):
     observation = ob_proc.process(sess, observation)        # process the image
     state = np.stack([observation] * 4, axis=2)     # stack the image 4 times
     while len(replay_memory) < INIT_REPLAY_MEMORY_SIZE:
-        action = env.action_space.sample()
+        action = random.randint(0,ACTION_SPACE-1)
 
         next_observation, reward, done, _ = env.step(action)
         if done: reward = TERMINATE_REWARD
         next_observation = ob_proc.process(sess, next_observation)
         next_state = np.append(state[:,:,1:], np.expand_dims(next_observation, 2), axis=2)
-        replay_memory.append(Transition(state, action, reward, next_state, int(done)))
+        replay_memory.append(Transition(state, action, reward, next_state, done))
 
         if done:
             observation = env.reset()
@@ -84,15 +85,12 @@ def main(_):
 
 
     # record videos
-    env = Monitor(env, directory=MONITOR_PATH, video_callable=lambda episode: episode % RECORD_VIDEO_EVERY == 0, resume=True)
+    env = Monitor(env, directory=MONITOR_PATH, video_callable=lambda episode: episode % RECORD_VIDEO_EVERY == 0 or (episode+1) == TRAINING_EPISODES, resume=True)
 
     # total steps
     total_iteration = 0
-    epsilon = INITIAL_EPSILON
-    max_episode_reward = -999
-    soft_train_loss = 0
-    soft_episode_reward = 0
-    soft_decay = 0.9
+    max_episode_reward = TERMINATE_REWARD
+    loss_record = []
     for episode in xrange(TRAINING_EPISODES):
 
         # Reset the environment
@@ -101,10 +99,12 @@ def main(_):
         state = np.stack([observation] * 4, axis=2)
 
         episode_reward = 0                              # store the episode reward
+        del loss_record[:]
         for frame in itertools.count():
             # choose a action
+            epsilon = epsilon_series[min(EXPLORE_STPES, total_iteration)]
             if random.random() < epsilon:
-                action = env.action_space.sample()
+                action = random.randint(0,ACTION_SPACE-1)
             else:
                 state_feature = np.expand_dims(state, axis=0)
                 q_value = behavior_Q.forward(sess, state_feature)
@@ -115,26 +115,25 @@ def main(_):
             episode_reward += reward
             if done: reward = TERMINATE_REWARD
 
-            # if the size of replay buffer is too big, remove the oldest one. Hint: replay_memory.pop(0)
-            if len(replay_memory) == REPLAY_MEMORY_SIZE: replay_memory.pop(0)
-
             # save the transition to replay buffer
             next_observation = ob_proc.process(sess, next_observation)
             next_state = np.append(state[:,:,1:], np.expand_dims(next_observation, 2), axis=2)
-            replay_memory.append(Transition(state, action, reward, next_state, int(done)))
+            replay_memory.append(Transition(state, action, reward, next_state, done))
+
+             # if the size of replay buffer is too big, remove the oldest one. Hint: replay_memory.pop(0)
+            if len(replay_memory) > REPLAY_MEMORY_SIZE: del replay_memory[0]
 
             # sample a minibatch from replay buffer. Hint: samples = random.sample(replay_memory, batch_size)
             samples = random.sample(replay_memory, BATCH_SIZE)
 
             # calculate target Q values by target network
-            batch_state_feature, batch_selected_action, batch_reward, batch_next_state_feature, batch_done = map(np.stack, zip(*samples))
+            batch_state_feature, batch_selected_action, batch_reward, batch_next_state_feature, batch_done = map(np.array, zip(*samples))
             target_q_value = target_Q.forward(sess, batch_next_state_feature)
-            target_q_value = batch_reward + GAMMA * (np.max(target_q_value, axis=1) * (1-batch_done))
+            target_q_value = batch_reward + np.invert(batch_done).astype(np.float32) * GAMMA * np.amax(target_q_value, axis=1)
 
             # Update network
             loss = behavior_Q.update(sess, batch_state_feature, batch_selected_action, target_q_value)
-            soft_train_loss += (1.0 - soft_decay) * (loss - soft_train_loss)
-
+            loss_record.append(loss)
             state = next_state
             total_iteration += 1
 
@@ -142,23 +141,17 @@ def main(_):
             if total_iteration % FREQ_UPDATE_TARGET_Q == 0:
                  target_Q.copy_parameter_from(sess, behavior_Q)
 
-            if total_iteration <= EXPLORE_STPES:
-                epsilon += (FINAL_EPSILON - INITIAL_EPSILON)/EXPLORE_STPES
-            else:
-                epsilon = FINAL_EPSILON
+            if done: break
 
-            if done:
-                soft_episode_reward += (1 - soft_decay) * (episode_reward - soft_episode_reward)
-                max_episode_reward = max(max_episode_reward, episode_reward)
-                print ("[%s] Episode %d, frames = %d, reward = %d (%d)" % (datetime.strftime(datetime.now(), "%Y/%m/%d %H:%M:%S"), episode+1, frame+1, episode_reward, max_episode_reward))
-                break
-
+        max_episode_reward = max(max_episode_reward, episode_reward)
+        print ("[%s] Episode %d, frames = %d, reward = %d (%d)" % (datetime.strftime(datetime.now(), "%Y/%m/%d %H:%M:%S"), episode+1, frame+1, episode_reward, max_episode_reward))
+        sys.stdout.flush()
+        train_summary = tf.Summary()
+        train_summary.value.add(tag="train_loss", simple_value=np.mean(loss_record))
+        train_summary.value.add(tag="episode_reward", simple_value=episode_reward)
+        train_summary.value.add(tag="epsilon", simple_value=epsilon)
+        summary_writer.add_summary(train_summary, episode)
         if episode % 200 == 0:
-            train_summary = tf.Summary()
-            train_summary.value.add(tag="train_loss", simple_value=soft_train_loss)
-            train_summary.value.add(tag="episode_reward", simple_value=soft_episode_reward)
-            train_summary.value.add(tag="epsilon", simple_value=epsilon)
-            summary_writer.add_summary(train_summary, episode)
             behavior_Q.save_model(sess, episode)
     sess.close()
 
